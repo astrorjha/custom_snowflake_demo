@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 from airflow.sdk import Asset
 from cosmos import (
     DbtTaskGroup,

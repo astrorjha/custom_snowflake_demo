@@ -38,9 +38,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from airflow.decorators import dag, task
-from airflow.operators.python import get_current_context
-from airflow.sdk import Asset
+from airflow.sdk import Asset, dag, get_current_context, task
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +92,7 @@ def regional_aggregator():
         to wire the dependency chain into emit_pipeline_asset.
         """
         context = get_current_context()
-        logical_date = context["logical_date"]
+        logical_date = context["dag_run"].logical_date
 
         log.info(
             "All 6 regions have landed data for logical_date=%s — "

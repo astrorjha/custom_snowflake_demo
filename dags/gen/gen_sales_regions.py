@@ -49,10 +49,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from airflow.decorators import dag, task
 from airflow.exceptions import AirflowSkipException
-from airflow.operators.python import get_current_context
-from airflow.sdk import Asset
+from airflow.sdk import Asset, dag, get_current_context, task
 
 log = logging.getLogger(__name__)
 
@@ -131,10 +129,10 @@ def make_region_dag(region: str):
             from include.scripts.generate_sales_data import generate_all
 
             context = get_current_context()
-            # context["logical_date"] is a pendulum DateTime (tz-aware UTC).
+            # dag_run.logical_date is a pendulum DateTime (tz-aware UTC).
             # Strip tzinfo before passing to generate_all: Faker's
             # date_time_between() raises TypeError on tz-aware bounds.
-            logical_dt: datetime = context["logical_date"].replace(tzinfo=None)
+            logical_dt: datetime = context["dag_run"].logical_date.replace(tzinfo=None)
             date_str = logical_dt.strftime("%Y-%m-%d")
             hour = logical_dt.hour
 

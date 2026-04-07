@@ -33,7 +33,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 from airflow.sdk import Asset
 
 log = logging.getLogger(__name__)
@@ -115,10 +115,10 @@ def ingest_s3_to_snowflake():
         """
         import boto3
         from airflow.exceptions import AirflowSkipException
-        from airflow.operators.python import get_current_context
+        from airflow.sdk import get_current_context
 
         context = get_current_context()
-        logical_date = context["logical_date"]
+        logical_date = context["dag_run"].logical_date
         date_str = logical_date.strftime("%Y-%m-%d")
         hour = logical_date.strftime("%H")
 
@@ -169,13 +169,13 @@ def ingest_s3_to_snowflake():
         import pyarrow as pa
         import pyarrow.parquet as pq
         import s3fs
-        from airflow.operators.python import get_current_context
+        from airflow.sdk import get_current_context
         from pyiceberg.catalog import load_catalog
         from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
         from pyiceberg.io.pyarrow import pyarrow_to_schema
 
         context = get_current_context()
-        logical_date = context["logical_date"]
+        logical_date = context["dag_run"].logical_date
         date_str = logical_date.strftime("%Y-%m-%d")
         hour = logical_date.strftime("%H")
         loaded_at = dt.datetime.now(tz=dt.timezone.utc)
@@ -279,11 +279,11 @@ def ingest_s3_to_snowflake():
         the Iceberg write or Snowflake catalog sync did not produce queryable data.
         """
         from airflow.exceptions import AirflowFailException
-        from airflow.operators.python import get_current_context
+        from airflow.sdk import get_current_context
         from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 
         context = get_current_context()
-        date_str = context["ds"]
+        date_str = context["dag_run"].logical_date.strftime("%Y-%m-%d")
 
         hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
         row_counts: dict[str, int] = {}
