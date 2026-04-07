@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Attach this policy to the IAM role used by your Airflow workers on Astro.",
+    "It grants the minimum permissions needed for the convert_to_iceberg task:",
+    "  - S3: read source Parquet files, write Iceberg data + metadata files",
+    "  - Glue: register and update Iceberg table definitions in galaxycommerce_raw",
+    "",
+    "Steps:",
+    "  1. In AWS IAM, create a new policy with this document.",
+    "  2. Attach the policy to the IAM role assumed by your Astro worker nodes",
+    "     (find the role ARN in Astro > Cluster > IAM Role).",
+    "  3. Replace <aws-account-id> with your actual AWS account ID."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IcebergS3ReadSource",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::galaxycommerce-sales-raw",
+        "arn:aws:s3:::galaxycommerce-sales-raw/raw/*"
+      ]
+    },
+    {
+      "Sid": "IcebergS3WriteIceberg",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::galaxycommerce-sales-raw",
+        "arn:aws:s3:::galaxycommerce-sales-raw/iceberg/*"
+      ]
+    },
+    {
+      "Sid": "IcebergGlueCatalog",
+      "Effect": "Allow",
+      "Action": [
+        "glue:CreateDatabase",
+        "glue:GetDatabase",
+        "glue:CreateTable",
+        "glue:UpdateTable",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:DeleteTable"
+      ],
+      "Resource": [
+        "arn:aws:glue:*:<aws-account-id>:catalog",
+        "arn:aws:glue:*:<aws-account-id>:database/galaxycommerce_raw",
+        "arn:aws:glue:*:<aws-account-id>:table/galaxycommerce_raw/*"
+      ]
+    }
+  ]
+}

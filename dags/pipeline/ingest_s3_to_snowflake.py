@@ -1,11 +1,24 @@
 """
 dags/pipeline/ingest_s3_to_snowflake.py
 =========================================
-Ingests Parquet files from S3 into Snowflake's RAW schema.
+Ingests sales data from S3 into Snowflake via Iceberg.
 
-Triggered by PIPELINE_ASSET — the combined S3 prefix asset emitted by
-regional_aggregator.py once all 6 region generation DAGs have completed.
-On success, emits RAW_ASSET to trigger the downstream dbt transformation DAG.
+Pipeline overview
+-----------------
+1. check_s3_manifest   — verify Parquet files have landed in S3 for every region
+2. convert_to_iceberg  — read Parquet files, write as Iceberg to S3, register in AWS Glue
+3. create_raw_tables   — ensure Snowflake external Iceberg table definitions exist (idempotent)
+4. validate_row_counts — confirm each Snowflake RAW table is queryable with rows for today
+5. emit_raw_asset      — emit RAW_ASSET to trigger the downstream dbt DAG
+
+Open table format strategy
+---------------------------
+Data is written as Apache Iceberg to s3://galaxycommerce-sales-raw/iceberg/ and registered
+in AWS Glue (galaxycommerce_raw database).  Snowflake reads these as external Iceberg tables
+via a Catalog Integration + External Volume — no COPY INTO, no vendor lock-in.
+
+The same Iceberg tables can be queried from Databricks or any Iceberg-compatible engine
+pointing at the same Glue catalog, enabling multi-engine access without duplication.
 
 Asset topology
 --------------
@@ -39,10 +52,18 @@ RAW_ASSET = Asset("snowflake://DEMO/RAW")
 SNOWFLAKE_CONN_ID = "snowflake_default"
 S3_BUCKET = "galaxycommerce-sales-raw"
 S3_PREFIX = "raw/sales"
+ICEBERG_S3_PREFIX = "s3://galaxycommerce-sales-raw/iceberg/"
+GLUE_DATABASE = "galaxycommerce_raw"
 REGIONS = ["us-east", "us-west", "eu-west", "eu-central", "apac-au", "apac-jp"]
 
-INCLUDE_DIR = Path(os.environ.get("AIRFLOW_HOME", "/usr/local/airflow")) / "include"
-SETUP_SQL = str(INCLUDE_DIR / "sql/snowflake_setup.sql")
+# Maps pipeline entity names to Glue/Iceberg table names (and Snowflake RAW table names)
+ENTITY_TABLE_MAP = {
+    "orders": "raw_order",
+    "order_items": "raw_order_item",
+    "customers": "raw_customer",
+    "products": "raw_product",
+    "marketing_events": "raw_marketing_event",
+}
 
 RAW_TABLES = {
     "RAW_ORDER": "DEMO.RAW.RAW_ORDER",
@@ -52,47 +73,11 @@ RAW_TABLES = {
     "RAW_MARKETING_EVENT": "DEMO.RAW.RAW_MARKETING_EVENT",
 }
 
-# ---------------------------------------------------------------------------
-# SQL helpers (executed at DAG parse time — lightweight file I/O only)
-# ---------------------------------------------------------------------------
-
-def _load_copy_sql(entity: str) -> list[str]:
-    """
-    Read a copy_into SQL template and expand it for all 6 regions.
-
-    Swaps {{ params.* }} placeholders for Airflow Jinja macros so they
-    are rendered correctly at task execution time.  The region placeholder
-    is resolved immediately (parse time) to produce one SQL block per region.
-    Returns a flat list of SQL statement strings for all regions.
-    """
-    sql_path = INCLUDE_DIR / f"sql/copy_into/copy_{entity}.sql"
-    template = sql_path.read_text()
-
-    # Replace params.* with equivalent Airflow macros rendered at runtime
-    template = (
-        template
-        .replace("{{ params.date_str }}", "{{ ds }}")
-        .replace("{{ params.hour }}", "{{ data_interval_start.hour }}")
-        .replace("{{ params.dag_run_id }}", "{{ run_id }}")
-    )
-
-    # Expand for every region — each item is a self-contained SQL block
-    # (COPY INTO + INSERT INTO LOAD_AUDIT)
-    statements: list[str] = []
-    for region in REGIONS:
-        statements.append(template.replace("{{ params.region }}", region))
-
-    return statements
-
-
-# Pre-load at parse time so the operator sql arg is ready
-_COPY_SQL: dict[str, list[str]] = {
-    "orders": _load_copy_sql("orders"),
-    "order_items": _load_copy_sql("order_items"),
-    "customers": _load_copy_sql("customers"),
-    "products": _load_copy_sql("products"),
-    "marketing_events": _load_copy_sql("marketing_events"),
-}
+INCLUDE_DIR = Path(os.environ.get("AIRFLOW_HOME", "/usr/local/airflow")) / "include"
+# Idempotent CREATE OR REPLACE ICEBERG TABLE statements run each DAG run.
+# The CATALOG INTEGRATION and EXTERNAL VOLUME they reference must be created
+# once by a Snowflake ACCOUNTADMIN — see include/sql/snowflake_setup.sql.
+ICEBERG_DDL_SQL = str(INCLUDE_DIR / "sql/create_iceberg_tables.sql")
 
 # ---------------------------------------------------------------------------
 # DAG
@@ -111,7 +96,7 @@ _DEFAULT_ARGS = {
     start_date=datetime(2025, 1, 1),
     catchup=False,
     max_active_runs=1,
-    tags=["galaxycommerce", "pipeline", "project-2"],
+    tags=["galaxycommerce", "pipeline", "project-2", "iceberg"],
     default_args=_DEFAULT_ARGS,
 )
 def ingest_s3_to_snowflake():
@@ -163,7 +148,115 @@ def ingest_s3_to_snowflake():
         return file_counts
 
     # ------------------------------------------------------------------
-    # Task 2: Ensure RAW tables exist (idempotent DDL)
+    # Task 2: Convert Parquet files to Iceberg and register in AWS Glue
+    # ------------------------------------------------------------------
+
+    @task()
+    def convert_to_iceberg(file_counts: dict[str, int]) -> dict[str, int]:
+        """
+        For each entity (orders, customers, etc.) and each region, reads all
+        Parquet files for the current logical date/hour from S3, appends
+        _source_file and _loaded_at audit columns, then writes the combined
+        result as an Iceberg table to s3://galaxycommerce-sales-raw/iceberg/
+        and registers (or updates) the table in the AWS Glue catalog.
+
+        On first run a new Iceberg table is created; on subsequent runs rows
+        are appended so the table accumulates a full history of loads.
+        """
+        import datetime as dt
+
+        import boto3
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import s3fs
+        from airflow.operators.python import get_current_context
+        from pyiceberg.catalog import load_catalog
+        from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
+        from pyiceberg.io.pyarrow import pyarrow_to_schema
+
+        context = get_current_context()
+        logical_date = context["logical_date"]
+        date_str = logical_date.strftime("%Y-%m-%d")
+        hour = logical_date.strftime("%H")
+        loaded_at = dt.datetime.now(tz=dt.timezone.utc)
+
+        catalog = load_catalog(
+            "glue",
+            **{
+                "type": "glue",
+                "warehouse": ICEBERG_S3_PREFIX,
+            },
+        )
+
+        try:
+            catalog.load_namespace_properties(GLUE_DATABASE)
+        except NoSuchNamespaceError:
+            catalog.create_namespace(GLUE_DATABASE)
+            log.info("Created Glue database: %s", GLUE_DATABASE)
+
+        s3_client = boto3.client("s3")
+        fs = s3fs.S3FileSystem()
+        row_counts: dict[str, int] = {}
+
+        for entity, iceberg_table_name in ENTITY_TABLE_MAP.items():
+            frames: list[pa.Table] = []
+
+            for region in REGIONS:
+                prefix = f"{S3_PREFIX}/region={region}/date={date_str}/hour={hour}/"
+                response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+
+                for obj in response.get("Contents", []):
+                    key = obj["Key"]
+                    if not key.endswith(".parquet"):
+                        continue
+
+                    arrow_tbl = pq.read_table(
+                        f"s3://{S3_BUCKET}/{key}",
+                        filesystem=fs,
+                    )
+
+                    n = len(arrow_tbl)
+                    arrow_tbl = arrow_tbl.append_column(
+                        "_source_file",
+                        pa.array([f"s3://{S3_BUCKET}/{key}"] * n, type=pa.string()),
+                    ).append_column(
+                        "_loaded_at",
+                        pa.array([loaded_at] * n, type=pa.timestamp("us", tz="UTC")),
+                    )
+                    frames.append(arrow_tbl)
+
+            if not frames:
+                log.warning("No Parquet files found for entity=%s — skipping", entity)
+                continue
+
+            combined = pa.concat_tables(frames)
+
+            try:
+                iceberg_tbl = catalog.load_table((GLUE_DATABASE, iceberg_table_name))
+                iceberg_tbl.append(combined)
+                log.info(
+                    "Iceberg append | table=%s.%s | rows=%d",
+                    GLUE_DATABASE, iceberg_table_name, len(combined),
+                )
+            except NoSuchTableError:
+                iceberg_schema = pyarrow_to_schema(combined.schema)
+                iceberg_tbl = catalog.create_table(
+                    identifier=(GLUE_DATABASE, iceberg_table_name),
+                    schema=iceberg_schema,
+                    location=f"{ICEBERG_S3_PREFIX}{iceberg_table_name}",
+                )
+                iceberg_tbl.append(combined)
+                log.info(
+                    "Iceberg create | table=%s.%s | rows=%d",
+                    GLUE_DATABASE, iceberg_table_name, len(combined),
+                )
+
+            row_counts[entity] = len(combined)
+
+        return row_counts
+
+    # ------------------------------------------------------------------
+    # Task 3: Ensure Snowflake external Iceberg table definitions exist
     # ------------------------------------------------------------------
 
     from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
@@ -171,65 +264,19 @@ def ingest_s3_to_snowflake():
     create_raw_tables = SQLExecuteQueryOperator(
         task_id="create_raw_tables",
         conn_id=SNOWFLAKE_CONN_ID,
-        sql=SETUP_SQL,
+        sql=ICEBERG_DDL_SQL,
     )
 
     # ------------------------------------------------------------------
-    # Tasks 3a-3e: COPY INTO — 5 parallel deferrable tasks, one per entity
-    # Each task runs 6 SQL blocks (one per region) sequentially within the
-    # same Snowflake API call, keeping the task graph to 5 nodes.
-    # ------------------------------------------------------------------
-
-    from airflow.providers.snowflake.operators.snowflake import SnowflakeSqlApiOperator
-
-    copy_orders = SnowflakeSqlApiOperator(
-        task_id="copy_orders",
-        snowflake_conn_id=SNOWFLAKE_CONN_ID,
-        sql=_COPY_SQL["orders"],
-        deferrable=True,
-    )
-
-    copy_order_items = SnowflakeSqlApiOperator(
-        task_id="copy_order_items",
-        snowflake_conn_id=SNOWFLAKE_CONN_ID,
-        sql=_COPY_SQL["order_items"],
-        deferrable=True,
-    )
-
-    copy_customers = SnowflakeSqlApiOperator(
-        task_id="copy_customers",
-        snowflake_conn_id=SNOWFLAKE_CONN_ID,
-        sql=_COPY_SQL["customers"],
-        deferrable=True,
-    )
-
-    copy_products = SnowflakeSqlApiOperator(
-        task_id="copy_products",
-        snowflake_conn_id=SNOWFLAKE_CONN_ID,
-        sql=_COPY_SQL["products"],
-        deferrable=True,
-    )
-
-    copy_marketing_events = SnowflakeSqlApiOperator(
-        task_id="copy_marketing_events",
-        snowflake_conn_id=SNOWFLAKE_CONN_ID,
-        sql=_COPY_SQL["marketing_events"],
-        deferrable=True,
-    )
-
-    # ------------------------------------------------------------------
-    # Task 4: Validate that every RAW table received rows for today's load
-    # Equivalent to running SQLColumnCheckOperator row-count assertions
-    # across all 5 tables, unified into a single task with consolidated
-    # logging and a single AirflowFailException on any zero-row table.
+    # Task 4: Validate that every Snowflake RAW Iceberg table has rows
     # ------------------------------------------------------------------
 
     @task()
     def validate_row_counts() -> dict[str, int]:
         """
-        Query each RAW table for rows loaded today (partitioned by _loaded_at date).
-        Logs counts for all 5 tables.  Raises AirflowFailException if any table
-        has zero rows, indicating the COPY INTO produced no output.
+        Query each Snowflake external Iceberg table for rows loaded today.
+        Raises AirflowFailException if any table returns zero rows, indicating
+        the Iceberg write or Snowflake catalog sync did not produce queryable data.
         """
         from airflow.exceptions import AirflowFailException
         from airflow.operators.python import get_current_context
@@ -253,7 +300,7 @@ def ingest_s3_to_snowflake():
         empty_tables = [name for name, count in row_counts.items() if count == 0]
         if empty_tables:
             raise AirflowFailException(
-                f"COPY INTO produced 0 rows for date={date_str} "
+                f"Zero rows queryable from Snowflake for date={date_str} "
                 f"in tables: {empty_tables}"
             )
 
@@ -266,12 +313,11 @@ def ingest_s3_to_snowflake():
     @task(outlets=[RAW_ASSET])
     def emit_raw_asset(_row_counts: dict[str, int]) -> bool:
         """
-        Emit RAW_ASSET to signal that Snowflake's RAW schema is populated and
-        ready for dbt transformation.  _row_counts is accepted only to wire the
-        TaskFlow dependency from validate_row_counts.
+        Emit RAW_ASSET to signal that Snowflake's RAW Iceberg tables are populated
+        and ready for dbt transformation.
         """
         log.info(
-            "RAW load confirmed. Emitting Asset '%s' to trigger downstream DAG.",
+            "RAW Iceberg load confirmed. Emitting Asset '%s' to trigger downstream DAG.",
             RAW_ASSET.uri,
         )
         return True
@@ -281,25 +327,10 @@ def ingest_s3_to_snowflake():
     # ------------------------------------------------------------------
 
     manifest = check_s3_manifest()
-
-    manifest >> create_raw_tables >> [
-        copy_orders,
-        copy_order_items,
-        copy_customers,
-        copy_products,
-        copy_marketing_events,
-    ]
-
+    iceberg_counts = convert_to_iceberg(manifest)
+    iceberg_counts >> create_raw_tables
     counts = validate_row_counts()
-
-    [
-        copy_orders,
-        copy_order_items,
-        copy_customers,
-        copy_products,
-        copy_marketing_events,
-    ] >> counts
-
+    create_raw_tables >> counts
     emit_raw_asset(counts)
 
 
