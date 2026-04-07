@@ -16,6 +16,10 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+seeds:
+  galaxycommerce:
+    +schema: STG
+
 models:
   galaxycommerce:
     staging:

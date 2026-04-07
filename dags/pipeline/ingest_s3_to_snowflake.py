@@ -166,11 +166,11 @@ def ingest_s3_to_snowflake():
     # Task 2: Ensure RAW tables exist (idempotent DDL)
     # ------------------------------------------------------------------
 
-    from airflow.providers.snowflake.operators.snowflake import SnowflakeOperator
+    from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 
-    create_raw_tables = SnowflakeOperator(
+    create_raw_tables = SQLExecuteQueryOperator(
         task_id="create_raw_tables",
-        snowflake_conn_id=SNOWFLAKE_CONN_ID,
+        conn_id=SNOWFLAKE_CONN_ID,
         sql=SETUP_SQL,
     )
 

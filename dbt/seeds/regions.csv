@@ -1,0 +1,7 @@
+region,continent,timezone_offset
+us-east,North America,-5
+us-west,North America,-8
+eu-west,Europe,0
+eu-central,Europe,1
+apac-au,Asia Pacific,10
+apac-jp,Asia Pacific,9
