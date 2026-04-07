@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: stg_customers
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: tier
+        tests:
+          - accepted_values:
+              values: ['bronze', 'silver', 'gold']

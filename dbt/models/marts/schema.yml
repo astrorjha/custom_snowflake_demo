@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: dim_customers
+    columns:
+      - name: customer_key
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        tests:
+          - not_null
+
+  - name: dim_products
+    columns:
+      - name: product_key
+        tests:
+          - not_null
+          - unique
+      - name: product_id
+        tests:
+          - not_null
+
+  - name: fact_orders
+    tests:
+      - revenue_reconciliation:
+          stg_model: ref('stg_orders')
+          fact_column: total_amount
+          stg_column: total_amount
+    columns:
+      - name: order_key
+        tests:
+          - not_null
+          - unique
+      - name: order_id
+        tests:
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+      - name: customer_key
+        tests:
+          - not_null
+
+  - name: fact_order_items
+    columns:
+      - name: item_key
+        tests:
+          - not_null
+          - unique
+      - name: order_key
+        tests:
+          - not_null
+      - name: product_key
+        tests:
+          - not_null

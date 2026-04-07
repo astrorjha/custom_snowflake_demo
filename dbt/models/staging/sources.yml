@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: raw
+    database: DEMO
+    schema: RAW
+    freshness:
+      warn_after: {count: 2, period: hour}
+      error_after: {count: 6, period: hour}
+    loaded_at_field: _loaded_at
+    tables:
+      - name: raw_order
+      - name: raw_order_item
+      - name: raw_customer
+      - name: raw_product
+      - name: raw_marketing_event

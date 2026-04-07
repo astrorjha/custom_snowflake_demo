@@ -1,0 +1,38 @@
+name: 'galaxycommerce'
+version: '1.0.0'
+config-version: 2
+
+profile: 'galaxycommerce'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  galaxycommerce:
+    staging:
+      +schema: STG
+      +materialized: view
+    intermediate:
+      +schema: STG
+      +materialized: view
+    marts:
+      +schema: MRT
+      +materialized: table
+    dw:
+      +schema: DW
+      +materialized: table
+    reporting:
+      +schema: RPT
+      +materialized: table
+    rpt:
+      +schema: RPT
+      +materialized: view
