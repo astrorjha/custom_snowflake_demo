@@ -180,9 +180,7 @@ def ingest_s3_to_snowflake():
     # same Snowflake API call, keeping the task graph to 5 nodes.
     # ------------------------------------------------------------------
 
-    from airflow.providers.snowflake.operators.snowflake_sql_api import (
-        SnowflakeSqlApiOperator,
-    )
+    from airflow.providers.snowflake.operators.snowflake import SnowflakeSqlApiOperator
 
     copy_orders = SnowflakeSqlApiOperator(
         task_id="copy_orders",
