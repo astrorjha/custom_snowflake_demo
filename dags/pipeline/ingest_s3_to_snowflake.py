@@ -16,6 +16,7 @@ Outlet (emitted):   snowflake://DEMO/RAW
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -40,7 +41,7 @@ S3_BUCKET = "galaxycommerce-sales-raw"
 S3_PREFIX = "raw/sales"
 REGIONS = ["us-east", "us-west", "eu-west", "eu-central", "apac-au", "apac-jp"]
 
-INCLUDE_DIR = Path(__file__).parents[2] / "include"
+INCLUDE_DIR = Path(os.environ.get("AIRFLOW_HOME", "/usr/local/airflow")) / "include"
 SETUP_SQL = str(INCLUDE_DIR / "sql/snowflake_setup.sql")
 
 RAW_TABLES = {
