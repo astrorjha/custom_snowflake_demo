@@ -116,7 +116,8 @@ def ingest_s3_to_snowflake():
         from airflow.sdk import get_current_context
 
         context = get_current_context()
-        logical_date = context["dag_run"].logical_date
+        # logical_date is None for asset-triggered runs in Airflow 3; fall back to run_after.
+        logical_date = context["dag_run"].logical_date or context["dag_run"].run_after
         date_str = logical_date.strftime("%Y-%m-%d")
         hour = logical_date.strftime("%H")
 
@@ -174,7 +175,8 @@ def ingest_s3_to_snowflake():
         from pyiceberg.io.pyarrow import pyarrow_to_schema  # used in except NoSuchTableError
 
         context = get_current_context()
-        logical_date = context["dag_run"].logical_date
+        # logical_date is None for asset-triggered runs in Airflow 3; fall back to run_after.
+        logical_date = context["dag_run"].logical_date or context["dag_run"].run_after
         date_str = logical_date.strftime("%Y-%m-%d")
         hour = logical_date.strftime("%H")
         loaded_at = dt.datetime.now(tz=dt.timezone.utc)
@@ -310,7 +312,8 @@ def ingest_s3_to_snowflake():
         from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 
         context = get_current_context()
-        date_str = context["dag_run"].logical_date.strftime("%Y-%m-%d")
+        logical_date = context["dag_run"].logical_date or context["dag_run"].run_after
+        date_str = logical_date.strftime("%Y-%m-%d")
 
         hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
         row_counts: dict[str, int] = {}
