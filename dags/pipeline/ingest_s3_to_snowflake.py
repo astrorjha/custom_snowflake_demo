@@ -239,6 +239,15 @@ def ingest_s3_to_snowflake():
 
             combined = pa.concat_tables(frames)
 
+            # Iceberg only supports microsecond timestamp precision; pandas writes ns.
+            cast_schema = pa.schema([
+                field.with_type(pa.timestamp("us", tz=field.type.tz))
+                if pa.types.is_timestamp(field.type) and field.type.unit == "ns"
+                else field
+                for field in combined.schema
+            ])
+            combined = combined.cast(cast_schema)
+
             try:
                 iceberg_tbl = catalog.load_table((GLUE_DATABASE, iceberg_table_name))
                 iceberg_tbl.append(combined)
