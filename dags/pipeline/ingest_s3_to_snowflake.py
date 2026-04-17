@@ -164,10 +164,11 @@ def ingest_s3_to_snowflake():
         """
         import datetime as dt
 
+        import io
+
         import boto3
         import pyarrow as pa
         import pyarrow.parquet as pq
-        import s3fs
         from airflow.sdk import get_current_context
         from pyiceberg.catalog import load_catalog
         from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
@@ -194,7 +195,6 @@ def ingest_s3_to_snowflake():
             log.info("Created Glue database: %s", GLUE_DATABASE)
 
         s3_client = boto3.client("s3")
-        fs = s3fs.S3FileSystem()
         row_counts: dict[str, int] = {}
 
         for entity, iceberg_table_name in ENTITY_TABLE_MAP.items():
@@ -209,14 +209,17 @@ def ingest_s3_to_snowflake():
                     if not key.endswith(".parquet"):
                         continue
 
-                    arrow_tbl = pq.read_table(
-                        f"s3://{S3_BUCKET}/{key}",
-                        filesystem=fs,
+                    # Download to an in-memory buffer so PyArrow reads a single
+                    # file in isolation — avoids the dataset API's multi-file
+                    # schema merge that fails when some files use dictionary
+                    # encoding and others use plain string for the same column.
+                    buf = io.BytesIO(
+                        s3_client.get_object(Bucket=S3_BUCKET, Key=key)["Body"].read()
                     )
+                    arrow_tbl = pq.read_table(buf)
 
-                    # Parquet files may encode string columns as dictionary
-                    # (categorical) type. Cast all to plain string so schemas
-                    # are consistent across files before concat.
+                    # Cast any remaining dictionary-encoded columns to their
+                    # plain value type so all frames have a uniform schema.
                     for i, field in enumerate(arrow_tbl.schema):
                         if pa.types.is_dictionary(field.type):
                             arrow_tbl = arrow_tbl.set_column(
