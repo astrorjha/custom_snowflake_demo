@@ -171,7 +171,7 @@ def ingest_s3_to_snowflake():
         from airflow.sdk import get_current_context
         from pyiceberg.catalog import load_catalog
         from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
-        from pyiceberg.io.pyarrow import pyarrow_to_schema
+        from pyiceberg.io.pyarrow import pyarrow_to_schema  # used in except NoSuchTableError
 
         context = get_current_context()
         logical_date = context["dag_run"].logical_date
@@ -247,7 +247,17 @@ def ingest_s3_to_snowflake():
                     GLUE_DATABASE, iceberg_table_name, len(combined),
                 )
             except NoSuchTableError:
-                iceberg_schema = pyarrow_to_schema(combined.schema)
+                from pyiceberg.table.name_mapping import MappedField, NameMapping
+
+                # Source Parquet files are written by pandas and have no
+                # embedded Iceberg field IDs.  Build a NameMapping that
+                # assigns sequential IDs by column position so
+                # pyarrow_to_schema can convert without them.
+                name_mapping = NameMapping([
+                    MappedField(field_id=i + 1, names=[field.name])
+                    for i, field in enumerate(combined.schema)
+                ])
+                iceberg_schema = pyarrow_to_schema(combined.schema, name_mapping=name_mapping)
                 iceberg_tbl = catalog.create_table(
                     identifier=(GLUE_DATABASE, iceberg_table_name),
                     schema=iceberg_schema,
