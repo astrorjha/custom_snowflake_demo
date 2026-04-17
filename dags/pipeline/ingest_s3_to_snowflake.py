@@ -33,8 +33,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from airflow.sdk import dag, task
-from airflow.sdk import Asset
+from airflow.sdk import Asset, dag, task
 
 log = logging.getLogger(__name__)
 
@@ -201,41 +200,38 @@ def ingest_s3_to_snowflake():
             frames: list[pa.Table] = []
 
             for region in REGIONS:
-                prefix = f"{S3_PREFIX}/region={region}/date={date_str}/hour={hour}/"
-                response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+                # File names are exactly {entity}.parquet — one file per
+                # entity per region/date/hour, written by gen_sales_regions.
+                key = f"{S3_PREFIX}/region={region}/date={date_str}/hour={hour}/{entity}.parquet"
 
-                for obj in response.get("Contents", []):
-                    key = obj["Key"]
-                    if not key.endswith(".parquet"):
-                        continue
-
-                    # Download to an in-memory buffer so PyArrow reads a single
-                    # file in isolation — avoids the dataset API's multi-file
-                    # schema merge that fails when some files use dictionary
-                    # encoding and others use plain string for the same column.
+                try:
                     buf = io.BytesIO(
                         s3_client.get_object(Bucket=S3_BUCKET, Key=key)["Body"].read()
                     )
-                    arrow_tbl = pq.read_table(buf)
+                except s3_client.exceptions.NoSuchKey:
+                    log.warning("File not found: s3://%s/%s — skipping region", S3_BUCKET, key)
+                    continue
 
-                    # Cast any remaining dictionary-encoded columns to their
-                    # plain value type so all frames have a uniform schema.
-                    for i, field in enumerate(arrow_tbl.schema):
-                        if pa.types.is_dictionary(field.type):
-                            arrow_tbl = arrow_tbl.set_column(
-                                i, field.name,
-                                arrow_tbl.column(i).cast(field.type.value_type),
-                            )
+                arrow_tbl = pq.read_table(buf)
 
-                    n = len(arrow_tbl)
-                    arrow_tbl = arrow_tbl.append_column(
-                        "_source_file",
-                        pa.array([f"s3://{S3_BUCKET}/{key}"] * n, type=pa.string()),
-                    ).append_column(
-                        "_loaded_at",
-                        pa.array([loaded_at] * n, type=pa.timestamp("us", tz="UTC")),
-                    )
-                    frames.append(arrow_tbl)
+                # Cast any remaining dictionary-encoded columns to their
+                # plain value type so all frames have a uniform schema.
+                for i, field in enumerate(arrow_tbl.schema):
+                    if pa.types.is_dictionary(field.type):
+                        arrow_tbl = arrow_tbl.set_column(
+                            i, field.name,
+                            arrow_tbl.column(i).cast(field.type.value_type),
+                        )
+
+                n = len(arrow_tbl)
+                arrow_tbl = arrow_tbl.append_column(
+                    "_source_file",
+                    pa.array([f"s3://{S3_BUCKET}/{key}"] * n, type=pa.string()),
+                ).append_column(
+                    "_loaded_at",
+                    pa.array([loaded_at] * n, type=pa.timestamp("us", tz="UTC")),
+                )
+                frames.append(arrow_tbl)
 
             if not frames:
                 log.warning("No Parquet files found for entity=%s — skipping", entity)
