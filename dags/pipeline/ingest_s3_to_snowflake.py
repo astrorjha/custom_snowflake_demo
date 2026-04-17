@@ -77,7 +77,7 @@ INCLUDE_DIR = Path(os.environ.get("AIRFLOW_HOME", "/usr/local/airflow")) / "incl
 # Idempotent CREATE OR REPLACE ICEBERG TABLE statements run each DAG run.
 # The CATALOG INTEGRATION and EXTERNAL VOLUME they reference must be created
 # once by a Snowflake ACCOUNTADMIN — see include/sql/snowflake_setup.sql.
-ICEBERG_DDL_SQL = str(INCLUDE_DIR / "sql/create_iceberg_tables.sql")
+ICEBERG_DDL_SQL = (INCLUDE_DIR / "sql/create_iceberg_tables.sql").read_text()
 
 # ---------------------------------------------------------------------------
 # DAG
@@ -86,7 +86,6 @@ ICEBERG_DDL_SQL = str(INCLUDE_DIR / "sql/create_iceberg_tables.sql")
 _DEFAULT_ARGS = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
-    "sla": timedelta(minutes=30),
 }
 
 
@@ -214,6 +213,16 @@ def ingest_s3_to_snowflake():
                         f"s3://{S3_BUCKET}/{key}",
                         filesystem=fs,
                     )
+
+                    # Parquet files may encode string columns as dictionary
+                    # (categorical) type. Cast all to plain string so schemas
+                    # are consistent across files before concat.
+                    for i, field in enumerate(arrow_tbl.schema):
+                        if pa.types.is_dictionary(field.type):
+                            arrow_tbl = arrow_tbl.set_column(
+                                i, field.name,
+                                arrow_tbl.column(i).cast(field.type.value_type),
+                            )
 
                     n = len(arrow_tbl)
                     arrow_tbl = arrow_tbl.append_column(

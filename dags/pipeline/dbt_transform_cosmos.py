@@ -95,7 +95,6 @@ render_config = RenderConfig(
 _DEFAULT_ARGS = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
-    "sla": timedelta(minutes=45),
 }
 
 
