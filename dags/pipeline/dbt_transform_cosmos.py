@@ -47,7 +47,7 @@ from cosmos import (
     ProjectConfig,
     RenderConfig,
 )
-from cosmos.profiles import SnowflakeUserPasswordProfileMapping
+from cosmos.profiles import SnowflakePrivateKeyPemProfileMapping
 
 log = logging.getLogger(__name__)
 
