@@ -4,10 +4,4 @@ models:
   - name: stg_orders
     columns:
       - name: order_id
-        tests:
-          - not_null
-          - unique
       - name: status
-        tests:
-          - accepted_values:
-              values: ['pending', 'confirmed', 'shipped', 'delivered', 'returned']

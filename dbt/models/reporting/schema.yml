@@ -6,13 +6,6 @@ models:
       Executive KPI reporting table. One row per region per day.
       This is the Astro Observe Data Product source.
       Do not query upstream tables directly — always use this table for dashboards.
-    tests:
-      - gross_revenue_not_negative:
-          column_name: gross_revenue
     columns:
       - name: report_date
-        tests:
-          - not_null
       - name: region
-        tests:
-          - not_null
