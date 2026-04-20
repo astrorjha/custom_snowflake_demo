@@ -65,7 +65,7 @@ RPT_ASSET = Asset("snowflake://DEMO/RPT/RPT_DAILY_KPIS")
 profile_config = ProfileConfig(
     profile_name="galaxycommerce",
     target_name="prod",
-    profile_mapping=SnowflakeUserPasswordProfileMapping(
+    profile_mapping=SnowflakePrivateKeyPemProfileMapping(
         conn_id="snowflake_default",
         profile_args={
             "database": "DEMO",
