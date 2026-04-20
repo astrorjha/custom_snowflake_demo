@@ -105,6 +105,7 @@ _DEFAULT_ARGS = {
     start_date=datetime(2025, 1, 1),
     catchup=False,
     max_active_runs=1,
+    max_active_tasks=2,
     tags=["galaxycommerce", "pipeline", "project-2", "dbt", "cosmos"],
     default_args=_DEFAULT_ARGS,
 )
@@ -154,8 +155,7 @@ def dbt_transform_cosmos():
         profile_config=profile_config,
         execution_config=execution_config,
         render_config=render_config,
-        concurrency=2,
-        default_args={"retries": 0, "queue": "dbt"},
+            default_args={"retries": 0, "queue": "dbt"},
         operator_args={"install_deps": True},
     )
 
