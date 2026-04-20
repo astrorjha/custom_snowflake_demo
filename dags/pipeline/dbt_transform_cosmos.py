@@ -86,6 +86,7 @@ project_config = ProjectConfig(
 
 render_config = RenderConfig(
     emit_datasets=True,
+    exclude=["dim_customers", "dim_products", "fact_order_items"],
 )
 
 # ---------------------------------------------------------------------------
@@ -153,7 +154,8 @@ def dbt_transform_cosmos():
         profile_config=profile_config,
         execution_config=execution_config,
         render_config=render_config,
-        default_args={"retries": 2, "queue": "dbt"},
+        concurrency=2,
+        default_args={"retries": 0, "queue": "dbt"},
         operator_args={"install_deps": True},
     )
 
