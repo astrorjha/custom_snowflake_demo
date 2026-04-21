@@ -69,7 +69,7 @@ profile_config = ProfileConfig(
         conn_id="snowflake_default",
         profile_args={
             "database": "DEMO",
-            "schema": "DEMO",
+            "schema": "STG",
             "warehouse": "HUMANS",
             "role": "RAVIJHA",
         },
