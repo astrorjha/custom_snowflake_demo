@@ -23,7 +23,7 @@ pointing at the same Glue catalog, enabling multi-engine access without duplicat
 Asset topology
 --------------
 Inlet  (schedule):  s3://galaxycommerce-sales-raw/raw/sales/
-Outlet (emitted):   snowflake://DEMO/RAW
+Outlet (emitted):   snowflake://gp21411.us-east-1.aws/demo/raw
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PIPELINE_ASSET = Asset("s3://galaxycommerce-sales-raw/raw/sales/")
-RAW_ASSET = Asset("snowflake://DEMO/RAW")
+RAW_ASSET = Asset("snowflake://gp21411.us-east-1.aws/demo/raw")
 
 # ---------------------------------------------------------------------------
 # Constants

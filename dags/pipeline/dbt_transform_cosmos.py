@@ -29,8 +29,8 @@ run cadence directly.
 
 Asset topology
 --------------
-Inlet  (schedule):  snowflake://DEMO/RAW
-Outlet (emitted):   snowflake://DEMO/RPT/RPT_DAILY_KPIS
+Inlet  (schedule):  snowflake://gp21411.us-east-1.aws/demo/raw
+Outlet (emitted):   snowflake://gp21411.us-east-1.aws/demo/rpt/rpt_daily_kpis
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ log = logging.getLogger(__name__)
 # Asset definitions
 # ---------------------------------------------------------------------------
 
-RAW_ASSET = Asset("snowflake://DEMO/RAW")
-RPT_ASSET = Asset("snowflake://DEMO/RPT/RPT_DAILY_KPIS")
+RAW_ASSET = Asset("snowflake://gp21411.us-east-1.aws/demo/raw")
+RPT_ASSET = Asset("snowflake://gp21411.us-east-1.aws/demo/rpt/rpt_daily_kpis")
 
 # ---------------------------------------------------------------------------
 # Cosmos configuration
