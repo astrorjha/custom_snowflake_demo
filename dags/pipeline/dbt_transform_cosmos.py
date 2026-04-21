@@ -68,6 +68,7 @@ profile_config = ProfileConfig(
     profile_mapping=SnowflakePrivateKeyPemProfileMapping(
         conn_id="snowflake_default",
         profile_args={
+            "account": "gp21411.us-east-1.aws",
             "database": "DEMO",
             "schema": "STG",
             "warehouse": "HUMANS",
